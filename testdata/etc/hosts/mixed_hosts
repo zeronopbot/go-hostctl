@@ -1,0 +1,19 @@
+# Host Entry 0
+127.0.0.1   host_entry_0
+127.0.0.1                   host_entry_0
+
+# Host Entry 1
+12.3.2.1		                                host_entry_1
+
+
+		# Host Entry 2
+          12.32.2.3              host_entry_2
+
+
+# Host entry 3
+# With another commment
+11.11.11.11 host_entry_3 somehost
+
+# Host entry 4
+12.12.12.12 host_entry_4 hostentry4 # some pending commment
+
