@@ -11,9 +11,28 @@
 
 
 # Host entry 3
-# With another commment
+# With another comment
 11.11.11.11 host_entry_3 somehost
 
 # Host entry 4
-12.12.12.12 host_entry_4 hostentry4 # some pending commment
+12.12.12.12 host_entry_4 hostentry4 # some pending comment
+12.12.12.13 host_entry_4 hostentry4 # some pending comment
+12.12.12.14 host_entry_4 hostentry4 # some pending comment
 
+##
+# Host Database
+#
+# localhost is used to configure the loopback interface
+# when the system is booting.  Do not change this entry.
+##
+127.0.0.1	localhost
+255.255.255.255	broadcasthost
+::1             localhost
+127.0.0.1	some_server
+# Added by Docker Desktop
+# To allow the same kube context to work on the host and the container:
+127.0.0.1 kubernetes.docker.internal
+# End of section
+
+10.0.0.1 localhost.localdomain
+127.0.0.1 some_macos.local some_macos #: special

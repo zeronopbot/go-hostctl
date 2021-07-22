@@ -10,6 +10,19 @@ import (
 	"strings"
 )
 
+func Normalize(item *string) string {
+	if item == nil || len(*item) == 0 {
+		return ""
+	}
+
+	*item = strings.Trim(strings.Trim(strings.TrimSpace(*item), "\t"), "\n")
+	return *item
+}
+
+func IsComment(item string) bool {
+	return strings.HasPrefix(item, "#")
+}
+
 type HostEntry struct {
 	rawLine []byte
 	Comment string
@@ -66,7 +79,7 @@ func (he HostEntry) Write(writer io.Writer, prefix string) error {
 	return nil
 }
 
-func NewHostEntry(line []byte) (*HostEntry, error) {
+func ParseHostEntry(line []byte) (*HostEntry, error) {
 
 	if line == nil || len(line) <= 0 {
 		return nil, fmt.Errorf("invalid line, empty or nil")
@@ -121,9 +134,40 @@ func NewHostEntry(line []byte) (*HostEntry, error) {
 	return hostEntry, hostEntry.Validate()
 }
 
+func NewHostEntry(ipaddr, host, alias, comment string) (*HostEntry, error) {
+
+	var hostEntry HostEntry
+
+	// IP address
+	ip := net.ParseIP(ipaddr)
+	if ip == nil {
+		return nil, fmt.Errorf("no ip address specified")
+	}
+
+	if ip.To4() == nil || ip.To16() == nil {
+		return nil, fmt.Errorf("must be valid ipv4 or ipv6 address")
+	}
+
+	// Host
+	if len(Normalize(&host)) <= 0 {
+		return nil, fmt.Errorf("no hostname specified")
+	}
+
+	if IsComment(host)
+
+
+
+
+}
+
 type HostsFileCtl struct {
 	HostsFile string
 	Entries []HostEntry
+}
+
+func NewHostFileCtl(fpath string) (HostsFileCtl, error) {
+	var hostctl HostsFileCtl
+	return hostctl, hostctl.Parse(fpath)
 }
 
 func tokenize(line []byte) ([]string, error) {
@@ -197,7 +241,7 @@ func (hfc *HostsFileCtl) Parse(hostFilePath string) error {
 			continue
 		}
 
-		entry, err := NewHostEntry(line)
+		entry, err := ParseHostEntry(line)
 		if err != nil {
 			return fmt.Errorf("invalid host entry on line %d - %s", lineNumber, err)
 		}
