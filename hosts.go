@@ -27,14 +27,14 @@ type HostEntry struct {
 	rawLine []byte
 	Comment string
 	IPAddress net.IP
-	DomainName string
-	Alias string
+	Hostname string
+	Alias []string
 }
 
 func (he *HostEntry) Validate() error {
 
 	// Just a comment line
-	if he.IPAddress == nil && len(he.DomainName) <= 0 && len(he.Alias) <= 0 && len(he.Comment) > 0 {
+	if he.IPAddress == nil && len(he.Hostname) <= 0 && (he.Alias == nil || len(he.Alias) <= 0) && len(he.Comment) > 0 {
 		return nil
 	}
 
@@ -44,7 +44,7 @@ func (he *HostEntry) Validate() error {
 	}
 
 	// Non comment line should have at least a domain name
-	if len(he.DomainName) <= 0 {
+	if len(he.Hostname) <= 0 {
 		return fmt.Errorf("entry must have a domain name if ip address is set")
 	}
 
@@ -63,7 +63,7 @@ func (he HostEntry) Write(writer io.Writer, prefix string) error {
 	}
 
 	line := he.IPAddress.String()
-	for _, str := range []string{he.DomainName, he.Alias, he.Comment} {
+	for _, str := range []string{he.Hostname, he.Alias, he.Comment} {
 
 		if len(str) <= 0 {
 			continue
@@ -96,47 +96,50 @@ func ParseHostEntry(line []byte) (*HostEntry, error) {
 
 	hostEntry := &HostEntry{
 		rawLine:    line,
+		Alias: make([]string, 0),
 	}
 
 	for n, token := range tokens {
 
 		tok := token
 
-		// Comment is last or only thing in entry
+		// Everything after this is part of the comment
 		if strings.HasPrefix(token, "#") {
-			hostEntry.Comment = tok
+			hostEntry.Comment = strings.Join(tokens[n:], " ")
 			return hostEntry, nil
 		}
 
 		switch n {
 
-		// ip address
+		// IP Address
 		case 0:
 			hostEntry.IPAddress = net.ParseIP(tok)
 			if hostEntry.IPAddress == nil {
 				return nil, fmt.Errorf("invalid ip address: %s", tok)
 			}
 
-		// fqdn
+		// Hostname
 		case 1:
-			hostEntry.DomainName = tok
+			hostEntry.Hostname = tok
 
-		// alias
-		case 2:
-			hostEntry.Alias = tok
-
-		// Can only be a comment and shouldn't reach here
-		case 3:
-			return nil, fmt.Errorf("expecting last entry to be a comment starting with a '#' character - got '%s'", tokens[n:])
+		// Aliases
+		default:
+			hostEntry.Alias = append(hostEntry.Alias, tok)
 		}
 	}
 
 	return hostEntry, hostEntry.Validate()
 }
 
-func NewHostEntry(ipaddr, host, alias, comment string) (*HostEntry, error) {
+func NewHostEntry(ipaddr, hostname, comment string, alias ... string) (*HostEntry, error) {
 
-	var hostEntry HostEntry
+	// Comment line only
+	if len(Normalize(&comment)) > 0 && len(ipaddr) == 0 && len(hostname) == 0 && (alias == nil || len(alias) <= 0) {
+		return &HostEntry{
+			rawLine:   []byte(comment),
+			Comment:   comment,
+		}, nil
+	}
 
 	// IP address
 	ip := net.ParseIP(ipaddr)
@@ -149,14 +152,33 @@ func NewHostEntry(ipaddr, host, alias, comment string) (*HostEntry, error) {
 	}
 
 	// Host
-	if len(Normalize(&host)) <= 0 {
-		return nil, fmt.Errorf("no hostname specified")
+	if len(Normalize(&hostname)) <= 0 || IsComment(hostname) {
+		return nil, fmt.Errorf("no hostname specified or start with #")
 	}
 
-	if IsComment(host)
+	// Aliases
+	aliases := make([]string, 0)
+	if alias != nil && len(alias) >= 0 {
+		for _, a := range alias {
+			temp := a
+			if len(Normalize(&temp)) > 0 && IsComment(temp) {
+				return nil, fmt.Errorf("alias cannot be a comment")
+			}
+			aliases = append(aliases, temp)
+		}
+	}
 
+	if len(Normalize(&comment)) > 0 && !IsComment(comment)  {
+		return nil, fmt.Errorf("comment must start with #")
+	}
 
-
+	return &HostEntry{
+		rawLine:     []byte(fmt.Sprintf("%s %s %s %s", ip.String(), hostname, strings.Join(aliases, " "), comment)),
+		Comment:    comment,
+		IPAddress:  ip,
+		Hostname:   hostname,
+		Alias:      aliases,
+	}, nil
 
 }
 
