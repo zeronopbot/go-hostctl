@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 const (
@@ -105,6 +108,7 @@ func IsValidAliases(aliases []string) bool {
 type HostEntry struct {
 	rawLine   []byte
 	isComment bool
+	Position  int
 	Comment   string
 	IPAddress net.IP
 	Hostname  string
@@ -115,6 +119,11 @@ func (he *HostEntry) Validate() error {
 
 	if he.Aliases == nil {
 		he.Aliases = make([]string, 0)
+	}
+
+	if he.isComment {
+		he.rawLine = []byte(he.Comment)
+		return nil
 	}
 
 	// Just a comment line
@@ -144,13 +153,13 @@ func (he *HostEntry) Validate() error {
 
 	// Setup the raw line based on what is provided and valid
 	if IsComment(he.Comment) && len(aliases) > 0 {
-		he.rawLine = []byte(fmt.Sprintf("%s\t%s\t%s\t%s\r\n", he.IPAddress.String(), he.Hostname, strings.Join(aliases, " "), he.Comment))
+		he.rawLine = []byte(fmt.Sprintf("%s\t%s\t%s\t%s", he.IPAddress.String(), he.Hostname, strings.Join(aliases, " "), he.Comment))
 	} else if IsComment(he.Comment) {
-		he.rawLine = []byte(fmt.Sprintf("%s\t%s\t%s\r\n", he.IPAddress.String(), he.Hostname, he.Comment))
+		he.rawLine = []byte(fmt.Sprintf("%s\t%s\t%s", he.IPAddress.String(), he.Hostname, he.Comment))
 	} else if len(he.Aliases) > 0 {
-		he.rawLine = []byte(fmt.Sprintf("%s\t%s\t%s\r\n", he.IPAddress.String(), he.Hostname, strings.Join(aliases, " ")))
+		he.rawLine = []byte(fmt.Sprintf("%s\t%s\t%s", he.IPAddress.String(), he.Hostname, strings.Join(aliases, " ")))
 	} else {
-		he.rawLine = []byte(fmt.Sprintf("%s\t%s\r\n", he.IPAddress.String(), he.Hostname))
+		he.rawLine = []byte(fmt.Sprintf("%s\t%s", he.IPAddress.String(), he.Hostname))
 	}
 
 	return nil
@@ -191,7 +200,7 @@ func ParseHostEntryLine(line []byte) (*HostEntry, error) {
 		// Everything after this is part of the comment
 		if strings.HasPrefix(token, "#") {
 			hostEntry.Comment = strings.Join(tokens[n:], " ")
-			hostEntry.isComment = true
+			hostEntry.isComment = n == 0 // only a comment line IF its the first token
 			return hostEntry, nil
 		}
 
@@ -235,12 +244,23 @@ func NewHostEntry(ipaddr, hostname, comment string, aliases ...string) (*HostEnt
 	return entry, entry.Validate()
 }
 
-type HostsFileCtl struct {
-	HostsFile string
-	Entries   []HostEntry
+type HostFileCtl interface {
+	Delete(position int) error
+	Add(entry HostEntry, position int) error
+	GetIP(ip string) ([]HostEntry, error)
+	GetAlias(alias string) ([]HostEntry, error)
+	GetHostname(alias string) ([]HostEntry, error)
+	Write(writer io.Writer) (int, error)
+	Flush() (int, error)
 }
 
-func NewHostFileCtl(hostFilePath string) (*HostsFileCtl, error) {
+type hostsFileCtl struct {
+	rwLck     *sync.RWMutex
+	hostsFile string
+	entries   []HostEntry
+}
+
+func NewHostFileCtl(hostFilePath string) (HostFileCtl, error) {
 
 	f, err := os.Open(hostFilePath)
 	if err != nil {
@@ -250,9 +270,10 @@ func NewHostFileCtl(hostFilePath string) (*HostsFileCtl, error) {
 
 	rdr := bufio.NewReader(f)
 
-	htctl := HostsFileCtl{
-		HostsFile: hostFilePath,
-		Entries:   make([]HostEntry, 0),
+	htctl := hostsFileCtl{
+		rwLck:     new(sync.RWMutex),
+		hostsFile: hostFilePath,
+		entries:   make([]HostEntry, 0),
 	}
 
 	var lineNumber int
@@ -283,27 +304,229 @@ readLoop:
 		}
 
 		lineNumber++
-		htctl.Entries = append(htctl.Entries, *entry)
+		entry.Position = len(htctl.entries)
+		htctl.entries = append(htctl.entries, *entry)
+
+		log.Printf("%d - %s", entry.Position, entry.rawLine)
 	}
 
 	return &htctl, nil
 }
 
-func (hfc *HostsFileCtl) Write(writer io.Writer) error {
+func (hfc *hostsFileCtl) updatePosition() {
+	for n, _ := range hfc.entries {
+		hfc.entries[n].Position = n
+	}
+}
 
-	if hfc.Entries == nil || len(hfc.Entries) <= 0 {
+func (hfc *hostsFileCtl) Delete(position int) error {
+
+	if position < -1 {
+		return fmt.Errorf("invalid position: %d", position)
+	}
+
+	hfc.rwLck.Lock()
+	defer hfc.rwLck.Unlock()
+
+	if position >= len(hfc.entries) {
+		return fmt.Errorf("postion out of range: %d", position)
+	}
+
+	if len(hfc.entries) == 0 {
 		return nil
 	}
 
-	for n, entry := range hfc.Entries {
-		if n != 0 && hfc.Entries[n-1].isComment {
-			writer.Write([]byte(CarriageReturnLineFeed))
+	switch position {
+	case 0:
+		if len(hfc.entries) > 1 {
+			hfc.entries = hfc.entries[1:]
+			break
 		}
+		hfc.entries = make([]HostEntry, 0)
 
-		if _, err := entry.Write(writer); err != nil {
-			return err
+	case -1:
+		if len(hfc.entries) > 1 {
+			hfc.entries = hfc.entries[:len(hfc.entries)-1]
+			break
 		}
+		hfc.entries = make([]HostEntry, 0)
+
+	default:
+		hfc.entries = append(hfc.entries[:position], hfc.entries[position+1:] ...)
 	}
 
 	return nil
+
+}
+
+func (hfc *hostsFileCtl) Add(entry HostEntry, position int) error {
+
+	if err := entry.Validate(); err != nil {
+		return err
+	}
+
+	if position < -1 {
+		return fmt.Errorf("invalid position: %d", position)
+	}
+
+	hfc.rwLck.Lock()
+	defer hfc.rwLck.Unlock()
+
+	if position == len(hfc.entries) {
+		position = -1
+	}
+
+	if position > len(hfc.entries) {
+		return fmt.Errorf("postion out of range: %d", position)
+	}
+
+	switch position {
+	case 0:
+		hfc.entries = append([]HostEntry{entry}, hfc.entries ...)
+	case -1:
+		hfc.entries = append(hfc.entries, entry)
+	default:
+		hfc.entries = append(append(hfc.entries[:position], entry), hfc.entries[position:] ...)
+	}
+
+	return nil
+}
+
+func (hfc *hostsFileCtl) GetIP(ip string) ([]HostEntry, error) {
+	if len(hfc.entries) == 0 {
+		return nil, fmt.Errorf("no entries in file")
+	}
+
+	ipaddr := net.ParseIP(ip)
+	if ipaddr == nil {
+		return nil, fmt.Errorf("invalid ip address specified: %s", ip)
+	}
+
+	hfc.rwLck.RLock()
+	defer hfc.rwLck.RUnlock()
+
+	entries := make([]HostEntry, 0)
+	for _, entry := range hfc.entries {
+		tmpEntry := entry
+		if strings.Compare(ip, entry.IPAddress.String()) == 0 {
+			entries = append(entries, tmpEntry)
+			break
+		}
+	}
+
+	return entries, nil
+}
+
+func (hfc *hostsFileCtl) GetAlias(alias string) ([]HostEntry, error) {
+
+	if len(hfc.entries) == 0 {
+		return nil, fmt.Errorf("no entries in file")
+	}
+
+	hfc.rwLck.RLock()
+	defer hfc.rwLck.RUnlock()
+
+	entries := make([]HostEntry, 0)
+	for _, entry := range hfc.entries {
+
+		if entry.Aliases == nil || len(entry.Aliases) == 0 {
+			continue
+		}
+
+		tmpEntry := entry
+		for _, a := range entry.Aliases {
+			if strings.Compare(alias, a) == 0 {
+				entries = append(entries, tmpEntry)
+				break
+			}
+		}
+	}
+
+	return entries, nil
+}
+
+func (hfc *hostsFileCtl) GetHostname(hostname string) ([]HostEntry, error) {
+
+	if len(hfc.entries) == 0 {
+		return nil, fmt.Errorf("no entries in file")
+	}
+
+	hfc.rwLck.RLock()
+	defer hfc.rwLck.RUnlock()
+
+	entries := make([]HostEntry, 0)
+	for _, entry := range hfc.entries {
+		tmpEntry := entry
+		if strings.Compare(hostname, entry.Hostname) == 0 {
+			entries = append(entries, tmpEntry)
+			break
+		}
+	}
+
+	return entries, nil
+}
+
+// Write will write all the entries to the write specified
+func (hfc *hostsFileCtl) Write(writer io.Writer) (int, error) {
+
+	if hfc.entries == nil || len(hfc.entries) <= 0 {
+		return 0, nil
+	}
+
+	count := 0
+	for n, entry := range hfc.entries {
+
+		c, err := writer.Write([]byte(CarriageReturnLineFeed))
+		if err != nil {
+			return 0, err
+		}
+		count += c
+
+		if n != 0 && !hfc.entries[n-1].isComment && entry.isComment {
+			c, err := writer.Write([]byte(CarriageReturnLineFeed))
+			if err != nil {
+				return 0, nil
+			}
+			count += c
+		}
+
+		c, err = entry.Write(writer)
+		if err != nil {
+			return 0, err
+		}
+		count += c
+	}
+
+	return count, nil
+}
+
+// Flush entries to the existing file
+// Reverts on any failure back to the original file contents
+func (hfc hostsFileCtl) Flush() (int, error) {
+
+	s, err := os.Stat(hfc.hostsFile)
+	if err != nil {
+		return 0, err
+	}
+
+	// Read in the existing contents to revert in cause of failure
+	contents, err := ioutil.ReadFile(hfc.hostsFile)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read existing file to make backup: %s", err)
+	}
+
+	defer func(err error) {
+		if err != nil {
+			ioutil.WriteFile(hfc.hostsFile, contents, s.Mode())
+		}
+	}(err)
+
+	var f *os.File
+	f, err = os.OpenFile(hfc.hostsFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, s.Mode())
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	return hfc.Write(f)
 }

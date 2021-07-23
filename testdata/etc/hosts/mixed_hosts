@@ -1,18 +1,22 @@
 # Host Entry 0
-127.0.0.1   host_entry_0
-127.0.0.1                   host_entry_0
+127.0.0.1    host_entry_0
+127.0.0.1           host_entry_0
 
 # Host Entry 1
-12.3.2.1		                                host_entry_1 h0 h1 h2
+12.3.2.1		                                          host_entry_1 h0 h1 h2
 
 
 		# Host Entry 2
-          12.32.2.3              host_entry_2               h0 h1 h2
+          12.32.2.3                  host_entry_2               h0 h1 h2
+
+
+
 
 
 # Host entry 3
 # With another comment
 11.11.11.11 host_entry_3 h0 h1 h2
+
 
 # Host entry 4
 12.12.12.12 host_entry_4 h0 h1 h2 # some pending comment
@@ -30,7 +34,7 @@
 ::1             localhost
 127.0.0.1	some_server
 # Added by Docker Desktop
-# To allow the same kube context to work on the host and the container:
+# To allow the same kube context to work on the host and the container
 127.0.0.1 kubernetes.docker.internal
 # End of section
 
