@@ -7,16 +7,29 @@ import (
 )
 
 func TestHostsFileCtl_Parse(t *testing.T) {
-
-	hosts := new(HostsFileCtl)
-	if err := hosts.Parse( "testdata/etc/hosts/mixed_hosts"); err != nil {
+	hctl, err := NewHostFileCtl("testdata/etc/hosts/mixed_hosts")
+	if err != nil {
 		t.Fatal(err)
+	}
+
+	t.Log(len(hctl.Entries), hctl.HostsFile)
+
+	for n, entry := range hctl.Entries {
+		t.Log(n, entry.isComment, string(entry.rawLine))
+		if entry.isComment {
+			continue
+		}
+
+		t.Logf("\t - %s", entry.IPAddress)
+		t.Logf("\t - %s", entry.Hostname)
+		t.Logf("\t - %s", entry.Aliases)
+		t.Logf("\t - %s", entry.Comment)
 	}
 }
 
 func TestHostsFileCtl_Write(t *testing.T) {
 
-	f, err := ioutil.TempFile(os.TempDir(), "hostfilectl")
+	f, err := ioutil.TempFile(os.TempDir(), "hostfilectl-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,12 +45,12 @@ func TestHostsFileCtl_Write(t *testing.T) {
 	}()
 	defer f.Close()
 
-	hosts := new(HostsFileCtl)
-	if err := hosts.Parse( "testdata/etc/hosts/mixed_hosts"); err != nil {
+	hctl, err := NewHostFileCtl("testdata/etc/hosts/mixed_hosts")
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := hosts.Write(f); err != nil {
+	if err := hctl.Write(f); err != nil {
 		t.Fatal(err)
 	}
 }

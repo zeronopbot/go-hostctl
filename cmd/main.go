@@ -2,14 +2,13 @@ package main
 
 import (
 	"flag"
-	go_hostctl "github.com/zeronopbot/go-hostctl"
+	. "github.com/zeronopbot/go-hostctl"
 	"log"
-	"net"
 )
 
 const (
 	HostControlModeCreate = "create"
-	HostControlModeRead = "read"
+	HostControlModeRead   = "read"
 	HostControlModeUpdate = "update"
 	HostControlModeDelete = "delete"
 )
@@ -24,11 +23,10 @@ func main() {
 	operation := flag.String("m", HostControlModeRead, "Host control command")
 	flag.Parse()
 
-	entry, err := go_hostctl.NewHostEntry(*ipAddr, *name, *alias, *comment)
+	entry, err := NewHostEntry(*ipAddr, *name, *alias, *comment)
 	if err != nil {
 		log.Fatalf("failed to build new host entry: %s", err)
 	}
 
-	HostC
-
+	log.Println(entry, fpath, operation)
 }
