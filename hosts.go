@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"os"
 	"regexp"
@@ -73,6 +72,9 @@ func IsComment(item string) bool {
 }
 
 func IsValidName(name string) bool {
+	if len(name) <= 0 {
+		return false
+	}
 	return len(nameMatcher.FindStringSubmatch(Normalize(&name))) > 0
 }
 
@@ -126,6 +128,20 @@ func (he *HostEntry) Validate() error {
 		return nil
 	}
 
+	if he.IPAddress != nil && IsComment(he.IPAddress.String()) {
+		return fmt.Errorf("ip address cannot be a comment: %s", he.IPAddress.String())
+	}
+
+	if IsComment(he.Hostname) {
+		return fmt.Errorf("hostname cannot be a comment: %s", he.Hostname)
+	}
+
+	for n, alias := range he.Aliases {
+		if IsComment(alias) {
+			return fmt.Errorf("alias %d cannot be a comment: %s", n+1, alias)
+		}
+ 	}
+
 	// Just a comment line
 	if !IsValidIP(he.IPAddress) && !IsValidName(he.Hostname) && !IsValidAliases(he.Aliases) && IsComment(Normalize(&he.Comment)) {
 		he.rawLine = []byte(he.Comment)
@@ -135,7 +151,7 @@ func (he *HostEntry) Validate() error {
 
 	// Non comment line should have valid IP
 	if !IsValidIP(he.IPAddress) {
-		return fmt.Errorf("no valid ip address parsed: %v", he.IPAddress)
+		return fmt.Errorf("no valid ip address parsed: %v", he)
 	}
 
 	// Non comment line should have at least a domain name
@@ -262,7 +278,13 @@ type hostsFileCtl struct {
 
 func NewHostFileCtl(hostFilePath string) (HostFileCtl, error) {
 
-	f, err := os.Open(hostFilePath)
+	// Get existing file mode
+	mode := os.FileMode(0644)
+	if stat, err := os.Stat(hostFilePath); err == nil {
+		mode = stat.Mode()
+	}
+
+	f, err := os.OpenFile(hostFilePath, os.O_CREATE | os.O_RDWR | os.O_SYNC, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -306,8 +328,6 @@ readLoop:
 		lineNumber++
 		entry.Position = len(htctl.entries)
 		htctl.entries = append(htctl.entries, *entry)
-
-		log.Printf("%d - %s", entry.Position, entry.rawLine)
 	}
 
 	return &htctl, nil
@@ -386,7 +406,7 @@ func (hfc *hostsFileCtl) Add(entry HostEntry, position int) error {
 	case -1:
 		hfc.entries = append(hfc.entries, entry)
 	default:
-		hfc.entries = append(append(hfc.entries[:position], entry), hfc.entries[position:] ...)
+		hfc.entries = append(hfc.entries[:position], append([]HostEntry{entry}, hfc.entries[position:] ...) ...)
 	}
 
 	return nil

@@ -4,29 +4,53 @@ import (
 	"flag"
 	. "github.com/zeronopbot/go-hostctl"
 	"log"
-)
-
-const (
-	HostControlModeCreate = "create"
-	HostControlModeRead   = "read"
-	HostControlModeUpdate = "update"
-	HostControlModeDelete = "delete"
+	"os"
 )
 
 func main() {
 
-	fpath := flag.String("f", "/etc/hosts", "Hosts file path")
+	fpath := flag.String("f", "/tmp/hosts", "Hosts file path")
 	name := flag.String("n", "", "Host name")
 	alias := flag.String("a", "", "Host alias")
 	ipAddr := flag.String("i", "", "IP address")
 	comment := flag.String("c", "", "Comment for new host")
-	operation := flag.String("m", HostControlModeRead, "Host control command")
 	flag.Parse()
 
-	entry, err := NewHostEntry(*ipAddr, *name, *alias, *comment)
+	ctl, err := NewHostFileCtl(*fpath)
 	if err != nil {
-		log.Fatalf("failed to build new host entry: %s", err)
+		log.Fatal(err)
 	}
 
-	log.Println(entry, fpath, operation)
+	entry, err := NewHostEntry(*ipAddr, *name, *comment, *alias)
+	if err != nil {
+		log.Fatalf("failed to create new host entry: %s", err)
+	}
+
+	// Add entry to end of file
+	if err := ctl.Add(*entry, -1); err != nil {
+		log.Fatal(err)
+	}
+
+	entry.Hostname = "another_host"
+	if err := ctl.Add(*entry, 0); err != nil {
+		log.Fatal(err)
+	}
+
+	hdr := HostEntry{
+		Comment: "# Some google stuff",
+	}
+	if err := ctl.Add(hdr, 1); err != nil {
+		log.Fatal(err)
+	}
+
+	entries, err := ctl.GetAlias("some_alias")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for n, e := range entries {
+		log.Printf("%d - %+v", n+1, e)
+	}
+
+	ctl.Write(os.Stdout)
 }
