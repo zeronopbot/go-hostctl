@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	RegexPatternName       = "^[a-zA-Z0-9\\.-_]*$"
+	RegexPatternName       = "^[a-zA-Z0-9\\.\\-_]*$"
 	CarriageReturnLineFeed = "\r\n"
 )
 
@@ -119,6 +119,7 @@ type HostEntry struct {
 
 func (he *HostEntry) Validate() error {
 
+	he.isComment = false
 	if he.Aliases == nil {
 		he.Aliases = make([]string, 0)
 	}
@@ -249,6 +250,10 @@ func ParseHostEntryLine(line []byte) (*HostEntry, error) {
 }
 
 func NewHostEntry(ipaddr, hostname, comment string, aliases ...string) (*HostEntry, error) {
+
+	if len(comment) != 0 && !strings.HasPrefix(Normalize(&comment), "#") {
+		comment = fmt.Sprintf("# %s", comment)
+	}
 
 	entry := &HostEntry{
 		Comment:   comment,
@@ -513,6 +518,15 @@ func (hfc *hostsFileCtl) Write(writer io.Writer) (int, error) {
 		c, err = entry.Write(writer)
 		if err != nil {
 			return 0, err
+		}
+		count += c
+	}
+
+	// New Line
+	if count > 0 {
+		c, err := writer.Write([]byte(CarriageReturnLineFeed))
+		if err != nil {
+			return 0, nil
 		}
 		count += c
 	}
