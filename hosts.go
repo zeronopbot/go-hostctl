@@ -361,6 +361,8 @@ func (hfc *hostsFileCtl) Delete(position int) error {
 		return nil
 	}
 
+	defer hfc.updatePosition()
+
 	switch position {
 	case 0:
 		if len(hfc.entries) > 1 {
@@ -404,6 +406,8 @@ func (hfc *hostsFileCtl) Add(entry HostEntry, position int) error {
 	if position > len(hfc.entries) {
 		return fmt.Errorf("postion out of range: %d", position)
 	}
+
+	defer hfc.updatePosition()
 
 	switch position {
 	case 0:

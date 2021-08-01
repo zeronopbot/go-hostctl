@@ -39,4 +39,4 @@
 # End of section
 
 10.0.0.1 localhost.localdomain
-127.0.0.1 some_macos.local some_macos #: special
+127.0.1.1 some_macos.local some_macos #: special
