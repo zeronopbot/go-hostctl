@@ -1,9 +1,11 @@
 package go_hostctl
 
 import (
+	"bytes"
 	"io/ioutil"
 	"log"
 	"os"
+	"reflect"
 	"testing"
 )
 
@@ -243,7 +245,7 @@ func TestHostsFileCtl_GetHostname(t *testing.T) {
 
 func TestHostsFileCtl_Write(t *testing.T) {
 
-	f, err := ioutil.TempFile(os.TempDir(), "hostfilectl-test")
+	f, err := ioutil.TempFile(os.TempDir(), "TestHostsFileCtl_Write")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,5 +267,96 @@ func TestHostsFileCtl_Write(t *testing.T) {
 
 	if _, err := hctl.Write(f); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHostsFileCtl_Sync(t *testing.T) {
+
+	f, err := ioutil.TempFile(os.TempDir(), "TestHostsFileCtl_Sync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		defer os.Remove(f.Name())
+
+		out, err := ioutil.ReadFile(f.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("\r\n%s", out)
+	}()
+	defer f.Close()
+
+	hctl, err := NewHostFileCtl(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for n, entry := range []HostEntry{*hostEntry1, *hostEntry2, *hostEntry3, *hostEntry4} {
+		if err := hctl.Add(entry, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := hctl.Sync(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check it
+	hctlCheck, err := NewHostFileCtl(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entriesMain := hctl.Entries()
+	entriesCheck := hctlCheck.Entries()
+
+	if !reflect.DeepEqual(entriesMain, entriesCheck) {
+		t.Fatalf("mismatch entires")
+	}
+}
+
+func TestHostsFileCtl_Read(t *testing.T) {
+
+	f, err := ioutil.TempFile(os.TempDir(), "TestHostsFileCtl_Sync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		defer os.Remove(f.Name())
+
+		out, err := ioutil.ReadFile(f.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("\r\n%s", out)
+	}()
+	defer f.Close()
+
+	hctlTest, err := NewHostFileCtl(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hctl, err := NewHostFileCtl("testdata/etc/hosts/mixed_hosts")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buf := bytes.NewBuffer(nil)
+	if _, err := hctl.Write(buf); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := hctlTest.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := hctlTest.Sync(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(hctlTest.Entries()) <= 0 {
+		t.Fatalf("missing entries")
 	}
 }

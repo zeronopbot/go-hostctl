@@ -276,7 +276,8 @@ type HostFileCtl interface {
 	GetAlias(alias string) ([]HostEntry, error)
 	GetHostname(hostname string) ([]HostEntry, error)
 	Write(writer io.Writer) (int, error)
-	Flush() (int, error)
+	Read(reader io.Reader) error
+	Sync() (int, error)
 	Entries() []HostEntry
 }
 
@@ -294,7 +295,8 @@ func NewHostFileCtl(hostFilePath string) (HostFileCtl, error) {
 		mode = stat.Mode()
 	}
 
-	f, err := os.OpenFile(hostFilePath, os.O_CREATE | os.O_RDWR | os.O_SYNC, mode)
+	// Only need to read here
+	f, err := os.OpenFile(hostFilePath, os.O_CREATE | os.O_RDONLY | os.O_SYNC, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -302,26 +304,32 @@ func NewHostFileCtl(hostFilePath string) (HostFileCtl, error) {
 
 	rdr := bufio.NewReader(f)
 
-	htctl := hostsFileCtl{
+	htctl := &hostsFileCtl{
 		rwLck:     new(sync.RWMutex),
 		hostsFile: hostFilePath,
 		entries:   make([]HostEntry, 0),
 	}
 
+	return htctl, htctl.read(rdr)
+}
+
+func (hfc *hostsFileCtl) read(rdr *bufio.Reader) error {
+
+	entries := make([]HostEntry, 0)
 	var lineNumber int
 readLoop:
 	for {
 
 		line, prefix, err := rdr.ReadLine()
 		if prefix {
-			return nil, fmt.Errorf("line is too long: %d", lineNumber)
+			return fmt.Errorf("line is too long: %d", lineNumber)
 		}
 
 		if err != nil {
 			if err == io.EOF {
 				break readLoop
 			}
-			return nil, err
+			return err
 		}
 
 		// Skip newlines
@@ -332,15 +340,17 @@ readLoop:
 
 		entry, err := ParseHostEntryLine(line)
 		if err != nil {
-			return nil, fmt.Errorf("invalid host entry on line %d - %s", lineNumber, err)
+			return fmt.Errorf("invalid host entry on line %d - %s", lineNumber, err)
 		}
 
 		lineNumber++
-		entry.Position = len(htctl.entries)
-		htctl.entries = append(htctl.entries, *entry)
+		entries = append(entries, *entry)
 	}
 
-	return &htctl, nil
+	// Update existing and positions
+	hfc.entries = append(hfc.entries, entries ...)
+	hfc.updatePosition()
+	return nil
 }
 
 func (hfc *hostsFileCtl) updatePosition() {
@@ -500,6 +510,11 @@ func (hfc *hostsFileCtl) GetHostname(hostname string) ([]HostEntry, error) {
 	return entries, nil
 }
 
+// Read will update the hostfile control entries from a io.Reader
+func (hfc *hostsFileCtl) Read(reader io.Reader) error {
+	return hfc.read(bufio.NewReader(reader))
+}
+
 // Write will write all the entries to the write specified
 func (hfc *hostsFileCtl) Write(writer io.Writer) (int, error) {
 
@@ -543,9 +558,9 @@ func (hfc *hostsFileCtl) Write(writer io.Writer) (int, error) {
 	return count, nil
 }
 
-// Flush entries to the existing file
+// Sync entries to the actual file
 // Reverts on any failure back to the original file contents
-func (hfc *hostsFileCtl) Flush() (int, error) {
+func (hfc *hostsFileCtl) Sync() (int, error) {
 
 	s, err := os.Stat(hfc.hostsFile)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	. "github.com/zeronopbot/go-hostctl"
+	"io/ioutil"
 	"log"
 	"os"
 )
@@ -13,15 +14,26 @@ func main() {
 	fpath := flag.String("f", "testdata/etc/hosts/mixed_hosts", "Hosts file path")
 	flag.Parse()
 
-	// Create new host control file (or open existing)
-	hctl, err := NewHostFileCtl(*fpath)
+	// Open existing host file to copy its entries (for testing)
+	hctlFile1, err := NewHostFileCtl(*fpath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Remove it if exists
+	os.Remove("/tmp/hosts")
+
+	// File we want to "actually" use
+	hctl, err := NewHostFileCtl("/tmp/hosts")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Show any existing entries
-	for n, entry := range hctl.Entries() {
-		fmt.Printf("Entry: %d - %s\n", n, entry.String())
+	for _, entry := range hctlFile1.Entries() {
+		if err := hctl.Add(entry, 0); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	// Delete all localhost ips in loop
@@ -70,6 +82,27 @@ func main() {
 		}
 	}
 
-	// Write remaining contents to an io.Writer
-	hctl.Write(os.Stdout)
+	// Show the host file before we sync (empty)
+	out, err := ioutil.ReadFile("/tmp/hosts")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("\n---- Before Sync() ----\n%s\n-----------------------\n", string(out))
+
+	// Write remaining contents to an io.Writer (still not in file, just in memory)
+	if _, err := hctl.Write(os.Stdout); err != nil {
+		log.Fatal(err)
+	}
+
+	// Sync the memory contents to disk
+	if _, err := hctl.Sync(); err != nil {
+		log.Fatal(err)
+	}
+
+	// Show the host file after we sync (empty)
+	out, err = ioutil.ReadFile("/tmp/hosts")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("\n---- After Sync() ----\n%s\n-----------------------\n", string(out))
 }
