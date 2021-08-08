@@ -22,22 +22,22 @@ var (
 	nameMatcher = regexp.MustCompile(RegexPatternName)
 )
 
-func tokenize(line []byte) ([]string, error) {
+func tokenize(line []byte) ([]string, string, error) {
 
 	rawLine := line
 	tmpBuf := make([]byte, len(rawLine))
 	copy(tmpBuf, rawLine)
 
 	// Trim all whitespace left and right
-	tmpBuf = bytes.TrimLeft(bytes.TrimLeft(tmpBuf, " "), "\t")
-	tmpBuf = bytes.TrimRight(bytes.TrimLeft(tmpBuf, " "), "\t")
+	tmpBuf = bytes.TrimLeft(bytes.TrimLeft(bytes.TrimSpace(tmpBuf), " "), "\t")
+	tmpBuf = bytes.TrimRight(bytes.TrimLeft(bytes.TrimSpace(tmpBuf), " "), "\t")
 
 	tokens := make([]string, 0)
 	for {
 
 		i, words, err := bufio.ScanWords(tmpBuf, false)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 
 		if i == 0 {
@@ -55,7 +55,7 @@ func tokenize(line []byte) ([]string, error) {
 		tmpBuf = bytes.TrimLeft(bytes.TrimLeft(tmpBuf, " "), "\t")
 	}
 
-	return tokens, nil
+	return tokens, strings.Join(tokens, "\t"), nil
 }
 
 func Normalize(item *string) string {
@@ -190,13 +190,17 @@ func (he *HostEntry) Write(writer io.Writer) (int, error) {
 	return writer.Write(he.rawLine)
 }
 
+func (he *HostEntry) String() string {
+	return string(he.rawLine)
+}
+
 func ParseHostEntryLine(line []byte) (*HostEntry, error) {
 
 	if line == nil || len(line) <= 0 {
 		return nil, fmt.Errorf("invalid line, empty or nil")
 	}
 
-	tokens, err := tokenize(line)
+	tokens, rawLine, err := tokenize(line)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +210,7 @@ func ParseHostEntryLine(line []byte) (*HostEntry, error) {
 	}
 
 	hostEntry := &HostEntry{
-		rawLine: line,
+		rawLine: []byte(rawLine),
 		Aliases: make([]string, 0),
 	}
 
@@ -270,9 +274,10 @@ type HostFileCtl interface {
 	Add(entry HostEntry, position int) error
 	GetIP(ip string) ([]HostEntry, error)
 	GetAlias(alias string) ([]HostEntry, error)
-	GetHostname(alias string) ([]HostEntry, error)
+	GetHostname(hostname string) ([]HostEntry, error)
 	Write(writer io.Writer) (int, error)
 	Flush() (int, error)
+	Entries() []HostEntry
 }
 
 type hostsFileCtl struct {
@@ -540,7 +545,7 @@ func (hfc *hostsFileCtl) Write(writer io.Writer) (int, error) {
 
 // Flush entries to the existing file
 // Reverts on any failure back to the original file contents
-func (hfc hostsFileCtl) Flush() (int, error) {
+func (hfc *hostsFileCtl) Flush() (int, error) {
 
 	s, err := os.Stat(hfc.hostsFile)
 	if err != nil {
@@ -567,4 +572,14 @@ func (hfc hostsFileCtl) Flush() (int, error) {
 	defer f.Close()
 
 	return hfc.Write(f)
+}
+
+func (hfc *hostsFileCtl) Entries() []HostEntry {
+
+	hfc.rwLck.RLock()
+	defer hfc.rwLck.RUnlock()
+
+	entries := make([]HostEntry, len(hfc.entries))
+	copy(entries, hfc.entries)
+	return entries
 }
