@@ -1,3 +1,7 @@
+
+1.2.3.4   some-entry
+4.3.2.1   another-entry
+
 # Host Entry 0
 127.0.0.1    host_entry_0           #: Some host comment
 127.0.0.1           host_entry_0

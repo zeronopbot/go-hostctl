@@ -111,6 +111,7 @@ type HostEntry struct {
 	rawLine   []byte
 	isComment bool
 	Position  int
+	Header    string
 	Comment   string
 	IPAddress net.IP
 	Hostname  string
@@ -187,14 +188,24 @@ func (he *HostEntry) Write(writer io.Writer) (int, error) {
 		return 0, err
 	}
 
-	return writer.Write(he.rawLine)
+	var written int
+	var err error
+	if len(he.Header) > 0 {
+		written, err = writer.Write([]byte(he.Header + "\n"))
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	n, err := writer.Write(append(he.rawLine, '\n'))
+	return written +n, err
 }
 
 func (he *HostEntry) String() string {
 	return string(he.rawLine)
 }
 
-func ParseHostEntryLine(line []byte) (*HostEntry, error) {
+func ParseHostEntryLine(line []byte, header string) (*HostEntry, error) {
 
 	if line == nil || len(line) <= 0 {
 		return nil, fmt.Errorf("invalid line, empty or nil")
@@ -212,8 +223,10 @@ func ParseHostEntryLine(line []byte) (*HostEntry, error) {
 	hostEntry := &HostEntry{
 		rawLine: []byte(rawLine),
 		Aliases: make([]string, 0),
+		Header: header,
 	}
 
+	parseTokens:
 	for n, token := range tokens {
 
 		tok := token
@@ -222,7 +235,7 @@ func ParseHostEntryLine(line []byte) (*HostEntry, error) {
 		if strings.HasPrefix(token, "#") {
 			hostEntry.Comment = strings.Join(tokens[n:], " ")
 			hostEntry.isComment = n == 0 // only a comment line IF its the first token
-			return hostEntry, nil
+			break parseTokens
 		}
 
 		switch n {
@@ -317,6 +330,7 @@ func (hfc *hostsFileCtl) read(rdr *bufio.Reader) error {
 
 	entries := make([]HostEntry, 0)
 	var lineNumber int
+	var header string
 readLoop:
 	for {
 
@@ -332,19 +346,28 @@ readLoop:
 			return err
 		}
 
+		lineNumber++
+
 		// Skip newlines
 		if len(line) <= 0 {
-			lineNumber++
 			continue
 		}
 
-		entry, err := ParseHostEntryLine(line)
+		// If line starts with a # then its a comment
+		line = bytes.TrimLeft(bytes.TrimLeft(line, " "), "\t")
+		if strings.HasPrefix(string(line), "#") {
+			header += fmt.Sprintf("\n%s", line)
+			continue
+		}
+
+		entry, err := ParseHostEntryLine(line, header)
 		if err != nil {
 			return fmt.Errorf("invalid host entry on line %d - %s", lineNumber, err)
 		}
 
-		lineNumber++
+		// Append entries, reset header
 		entries = append(entries, *entry)
+		header = ""
 	}
 
 	// Update existing and positions
@@ -353,12 +376,17 @@ readLoop:
 	return nil
 }
 
+// Updates the existing positions for all entries tracked
 func (hfc *hostsFileCtl) updatePosition() {
 	for n, _ := range hfc.entries {
-		hfc.entries[n].Position = n
+		pos := n
+		hfc.entries[n].Position = pos
 	}
 }
 
+// Delete will remove a item from the in memory tracking system
+// -1 will remove the last entry
+// 0 will remove the first entry
 func (hfc *hostsFileCtl) Delete(position int) error {
 
 	if position < -1 {
@@ -379,6 +407,8 @@ func (hfc *hostsFileCtl) Delete(position int) error {
 	defer hfc.updatePosition()
 
 	switch position {
+	
+	// Remove the first entry
 	case 0:
 		if len(hfc.entries) > 1 {
 			hfc.entries = hfc.entries[1:]
@@ -386,6 +416,7 @@ func (hfc *hostsFileCtl) Delete(position int) error {
 		}
 		hfc.entries = make([]HostEntry, 0)
 
+	// Remove the last entry
 	case -1:
 		if len(hfc.entries) > 1 {
 			hfc.entries = hfc.entries[:len(hfc.entries)-1]
@@ -393,6 +424,7 @@ func (hfc *hostsFileCtl) Delete(position int) error {
 		}
 		hfc.entries = make([]HostEntry, 0)
 
+	// Skip over the position specified 
 	default:
 		hfc.entries = append(hfc.entries[:position], hfc.entries[position+1:] ...)
 	}
@@ -401,6 +433,7 @@ func (hfc *hostsFileCtl) Delete(position int) error {
 
 }
 
+// Adds will add an entry into the tracker at a given position
 func (hfc *hostsFileCtl) Add(entry HostEntry, position int) error {
 
 	if err := entry.Validate(); err != nil {
@@ -522,35 +555,13 @@ func (hfc *hostsFileCtl) Write(writer io.Writer) (int, error) {
 		return 0, nil
 	}
 
-	count := 0
-	for n, entry := range hfc.entries {
+	var count int
+	for _, entry := range hfc.entries {
 
-		c, err := writer.Write([]byte(CarriageReturnLineFeed))
+		// Write out the entry
+		c, err := entry.Write(writer)
 		if err != nil {
 			return 0, err
-		}
-		count += c
-
-		if n != 0 && !hfc.entries[n-1].isComment && entry.isComment {
-			c, err := writer.Write([]byte(CarriageReturnLineFeed))
-			if err != nil {
-				return 0, nil
-			}
-			count += c
-		}
-
-		c, err = entry.Write(writer)
-		if err != nil {
-			return 0, err
-		}
-		count += c
-	}
-
-	// New Line
-	if count > 0 {
-		c, err := writer.Write([]byte(CarriageReturnLineFeed))
-		if err != nil {
-			return 0, nil
 		}
 		count += c
 	}
